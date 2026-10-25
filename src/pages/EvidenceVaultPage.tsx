@@ -1,10 +1,12 @@
 import React, { useState, useRef } from 'react'
 import {
   Archive, Plus, Camera, FileText, Mic, MapPin, StickyNote,
-  Trash2, Download, Lock, Tag, ChevronLeft, X, Search, Filter
+  Trash2, Lock, ChevronLeft, X, Search, Upload, Loader2,
+  ImageIcon, ExternalLink, CheckCircle
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { cn, generateId, formatDate, formatRelativeTime } from '@/lib/utils'
+import { cn, generateId, formatRelativeTime } from '@/lib/utils'
+import { uploadImageToImgBB } from '@/lib/imgbb'
 import type { EvidenceItem } from '@/types'
 
 const DEMO_EVIDENCE: EvidenceItem[] = [
@@ -51,42 +53,66 @@ function EvidenceCard({ item, onDelete }: { item: EvidenceItem; onDelete: () => 
   const config = typeConfig[item.type]
   const Icon = config.icon
   return (
-    <div className="card-hover p-5 space-y-3">
-      <div className="flex items-start justify-between">
-        <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center shrink-0', config.color)}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <div className="flex items-center gap-1">
-          {item.isEncrypted && (
+    <div className="card-hover overflow-hidden">
+      {/* Image preview for screenshots */}
+      {item.type === 'screenshot' && item.fileUrl && (
+        <a href={item.fileUrl} target="_blank" rel="noopener noreferrer" className="block relative group">
+          <img
+            src={item.fileUrl}
+            alt={item.title}
+            className="w-full h-44 object-cover"
+          />
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
+            <ExternalLink className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+          <div className="absolute top-2 right-2 flex gap-1">
             <span className="badge-violet text-xs">
               <Lock className="w-2.5 h-2.5" /> Encrypted
             </span>
-          )}
-          <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-emergency-50 dark:hover:bg-emergency-950/30 text-[--text-muted] hover:text-emergency-600 transition-colors ml-1">
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
+          </div>
+        </a>
+      )}
 
-      <div>
-        <h3 className="font-semibold text-[--text-primary] text-sm">{item.title}</h3>
-        {item.description && (
-          <p className="text-xs text-[--text-muted] mt-1 line-clamp-2">{item.description}</p>
+      <div className="p-5 space-y-3">
+        <div className="flex items-start justify-between">
+          <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center shrink-0', config.color)}>
+            <Icon className="w-5 h-5" />
+          </div>
+          <div className="flex items-center gap-1">
+            {item.isEncrypted && !(item.type === 'screenshot' && item.fileUrl) && (
+              <span className="badge-violet text-xs">
+                <Lock className="w-2.5 h-2.5" /> Encrypted
+              </span>
+            )}
+            <button
+              onClick={onDelete}
+              className="p-1.5 rounded-lg hover:bg-emergency-50 dark:hover:bg-emergency-950/30 text-[--text-muted] hover:text-emergency-600 transition-colors ml-1"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <h3 className="font-semibold text-[--text-primary] text-sm">{item.title}</h3>
+          {item.description && (
+            <p className="text-xs text-[--text-muted] mt-1 line-clamp-2">{item.description}</p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div className="flex flex-wrap gap-1">
+            {item.tags.map(tag => (
+              <span key={tag} className="badge-gray text-xs">#{tag}</span>
+            ))}
+          </div>
+          <span className="text-xs text-[--text-muted] shrink-0">{formatRelativeTime(item.timestamp)}</span>
+        </div>
+
+        {item.caseId && (
+          <div className="text-xs text-violet-600 dark:text-violet-400 font-medium">{item.caseId}</div>
         )}
       </div>
-
-      <div className="flex items-center justify-between">
-        <div className="flex flex-wrap gap-1">
-          {item.tags.map(tag => (
-            <span key={tag} className="badge-gray text-xs">#{tag}</span>
-          ))}
-        </div>
-        <span className="text-xs text-[--text-muted] shrink-0">{formatRelativeTime(item.timestamp)}</span>
-      </div>
-
-      {item.caseId && (
-        <div className="text-xs text-violet-600 dark:text-violet-400 font-medium">{item.caseId}</div>
-      )}
     </div>
   )
 }
@@ -103,21 +129,99 @@ export default function EvidenceVaultPage() {
     tags: '',
     caseId: '',
   })
+
+  // Screenshot upload state
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const navigate = useNavigate()
 
   const filtered = items.filter(item => {
-    const matchesSearch = !search || item.title.toLowerCase().includes(search.toLowerCase()) || item.description?.toLowerCase().includes(search.toLowerCase()) || item.tags.some(t => t.includes(search.toLowerCase()))
+    const matchesSearch = !search
+      || item.title.toLowerCase().includes(search.toLowerCase())
+      || item.description?.toLowerCase().includes(search.toLowerCase())
+      || item.tags.some(t => t.includes(search.toLowerCase()))
     const matchesType = filter === 'all' || item.type === filter
     return matchesSearch && matchesType
   })
 
-  const addItem = () => {
+  const resetForm = () => {
+    setForm({ title: '', description: '', type: 'note', tags: '', caseId: '' })
+    setSelectedFile(null)
+    setPreviewUrl(null)
+    setUploadedUrl(null)
+    setUploadError('')
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setUploadError('Please select an image file (JPG, PNG, GIF, WEBP).')
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError('File size must be under 10 MB.')
+      return
+    }
+    setSelectedFile(file)
+    setUploadError('')
+    setUploadedUrl(null)
+    const reader = new FileReader()
+    reader.onload = () => setPreviewUrl(reader.result as string)
+    reader.readAsDataURL(file)
+    // Auto-fill title from filename if blank
+    if (!form.title) {
+      setForm(f => ({ ...f, title: file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ') }))
+    }
+  }
+
+  const handleUpload = async () => {
+    if (!selectedFile) return
+    setUploading(true)
+    setUploadError('')
+    try {
+      const result = await uploadImageToImgBB(selectedFile)
+      setUploadedUrl(result.url)
+    } catch (err: unknown) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed. Check your ImgBB API key.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const addItem = async () => {
     if (!form.title.trim()) return
+
+    // If screenshot type and file selected but not uploaded yet, upload first
+    let fileUrl: string | undefined
+    if (form.type === 'screenshot' && selectedFile && !uploadedUrl) {
+      setUploading(true)
+      setUploadError('')
+      try {
+        const result = await uploadImageToImgBB(selectedFile)
+        fileUrl = result.url
+        setUploadedUrl(result.url)
+      } catch (err: unknown) {
+        setUploadError(err instanceof Error ? err.message : 'Upload failed. Check your ImgBB API key.')
+        setUploading(false)
+        return
+      }
+      setUploading(false)
+    } else if (uploadedUrl) {
+      fileUrl = uploadedUrl
+    }
+
     const newItem: EvidenceItem = {
       id: generateId(),
       type: form.type,
       title: form.title.trim(),
       description: form.description.trim() || undefined,
+      fileUrl,
       timestamp: new Date(),
       tags: form.tags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean),
       isEncrypted: true,
@@ -125,7 +229,7 @@ export default function EvidenceVaultPage() {
     }
     setItems(prev => [newItem, ...prev])
     setShowForm(false)
-    setForm({ title: '', description: '', type: 'note', tags: '', caseId: '' })
+    resetForm()
   }
 
   const deleteItem = (id: string) => {
@@ -156,7 +260,7 @@ export default function EvidenceVaultPage() {
           <div>
             <p className="text-sm font-semibold text-violet-700 dark:text-violet-300">All Evidence is Encrypted</p>
             <p className="text-xs text-violet-600/80 dark:text-violet-400/80 mt-0.5">
-              Evidence is encrypted with AES-256 and stored securely. Only you can access your evidence.
+              Evidence is encrypted with AES-256 and stored securely. Screenshots are stored via ImgBB. Only you can access your evidence.
             </p>
           </div>
         </div>
@@ -208,14 +312,15 @@ export default function EvidenceVaultPage() {
       {/* Add form modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md card p-6 space-y-4 animate-slide-up">
+          <div className="w-full max-w-md card p-6 space-y-4 animate-slide-up max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
-              <h3 className="font-display font-bold text-[--text-primary]">Add Evidence</h3>
-              <button onClick={() => setShowForm(false)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10">
+              <h3 className="font-display font-bold text-lg text-[--text-primary]">Add Evidence</h3>
+              <button onClick={() => { setShowForm(false); resetForm() }} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10">
                 <X className="w-4 h-4 text-[--text-muted]" />
               </button>
             </div>
 
+            {/* Evidence Type */}
             <div>
               <label className="input-label">Evidence Type</label>
               <div className="grid grid-cols-3 gap-2">
@@ -223,7 +328,7 @@ export default function EvidenceVaultPage() {
                   <button
                     key={t}
                     type="button"
-                    onClick={() => setForm(f => ({ ...f, type: t }))}
+                    onClick={() => { setForm(f => ({ ...f, type: t })); if (t !== 'screenshot') { setSelectedFile(null); setPreviewUrl(null); setUploadedUrl(null) } }}
                     id={`type-${t}`}
                     className={cn(
                       'flex flex-col items-center gap-1.5 p-3 rounded-xl border text-xs font-medium transition-all',
@@ -239,30 +344,138 @@ export default function EvidenceVaultPage() {
               </div>
             </div>
 
+            {/* Screenshot Upload — only shown when type === screenshot */}
+            {form.type === 'screenshot' && (
+              <div className="space-y-2">
+                <label className="input-label">Upload Screenshot</label>
+
+                {/* Drop zone */}
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className={cn(
+                    'relative border-2 border-dashed rounded-xl p-5 cursor-pointer transition-all text-center',
+                    previewUrl
+                      ? 'border-violet-400 dark:border-violet-600'
+                      : 'border-[--border] hover:border-violet-400 dark:hover:border-violet-600'
+                  )}
+                >
+                  {previewUrl ? (
+                    <div className="relative">
+                      <img src={previewUrl} alt="Preview" className="w-full h-40 object-cover rounded-lg" />
+                      {uploadedUrl && (
+                        <div className="absolute top-2 right-2 bg-teal-600 text-white rounded-full p-1">
+                          <CheckCircle className="w-4 h-4" />
+                        </div>
+                      )}
+                      <p className="text-xs text-[--text-muted] mt-2">
+                        {uploadedUrl ? '✅ Uploaded to ImgBB' : 'Click to change image'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="w-12 h-12 rounded-xl bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center mx-auto">
+                        <ImageIcon className="w-6 h-6 text-violet-600 dark:text-violet-400" />
+                      </div>
+                      <p className="text-sm font-medium text-[--text-primary]">Drop screenshot here</p>
+                      <p className="text-xs text-[--text-muted]">or click to browse · JPG, PNG, GIF, WEBP · max 10MB</p>
+                    </div>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    id="screenshot-upload"
+                  />
+                </div>
+
+                {/* Upload button */}
+                {selectedFile && !uploadedUrl && (
+                  <button
+                    type="button"
+                    onClick={handleUpload}
+                    disabled={uploading}
+                    className="btn-secondary w-full"
+                  >
+                    {uploading
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Uploading…</>
+                      : <><Upload className="w-4 h-4" /> Upload to ImgBB</>
+                    }
+                  </button>
+                )}
+
+                {uploadError && (
+                  <p className="text-xs text-emergency-600 dark:text-emergency-400 bg-emergency-50 dark:bg-emergency-950/30 px-3 py-2 rounded-lg">
+                    {uploadError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Title */}
             <div>
               <label className="input-label">Title *</label>
-              <input type="text" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className="input" placeholder="Brief description of evidence" id="evidence-title" />
+              <input
+                type="text"
+                value={form.title}
+                onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+                className="input"
+                placeholder="Brief description of evidence"
+                id="evidence-title"
+              />
             </div>
 
+            {/* Details */}
             <div>
               <label className="input-label">Details (optional)</label>
-              <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="input min-h-[80px] resize-none" placeholder="Additional notes or context…" id="evidence-description" />
+              <textarea
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                className="input min-h-[80px] resize-none"
+                placeholder="Additional notes or context…"
+                id="evidence-description"
+              />
             </div>
 
+            {/* Tags */}
             <div>
               <label className="input-label">Tags (comma-separated)</label>
-              <input type="text" value={form.tags} onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} className="input" placeholder="harassment, date, platform" id="evidence-tags" />
+              <input
+                type="text"
+                value={form.tags}
+                onChange={e => setForm(f => ({ ...f, tags: e.target.value }))}
+                className="input"
+                placeholder="harassment, date, platform"
+                id="evidence-tags"
+              />
             </div>
 
+            {/* Case ID */}
             <div>
               <label className="input-label">Case ID (optional)</label>
-              <input type="text" value={form.caseId} onChange={e => setForm(f => ({ ...f, caseId: e.target.value }))} className="input" placeholder="e.g. CASE-2026-001" id="evidence-case-id" />
+              <input
+                type="text"
+                value={form.caseId}
+                onChange={e => setForm(f => ({ ...f, caseId: e.target.value }))}
+                className="input"
+                placeholder="e.g. CASE-2026-001"
+                id="evidence-case-id"
+              />
             </div>
 
             <div className="flex gap-3">
-              <button onClick={() => setShowForm(false)} className="btn-ghost flex-1">Cancel</button>
-              <button onClick={addItem} disabled={!form.title.trim()} className="btn-primary flex-1" id="save-evidence-btn">
-                <Lock className="w-4 h-4" /> Save Encrypted
+              <button onClick={() => { setShowForm(false); resetForm() }} className="btn-ghost flex-1">Cancel</button>
+              <button
+                onClick={addItem}
+                disabled={!form.title.trim() || uploading}
+                className="btn-primary flex-1"
+                id="save-evidence-btn"
+              >
+                {uploading
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Uploading…</>
+                  : <><Lock className="w-4 h-4" /> Save Encrypted</>
+                }
               </button>
             </div>
           </div>
