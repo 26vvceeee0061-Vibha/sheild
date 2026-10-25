@@ -20,6 +20,7 @@ import EvidenceVaultPage from '@/pages/EvidenceVaultPage'
 import PrivacyPage from '@/pages/PrivacyPage'
 import ResourcesPage from '@/pages/ResourcesPage'
 import ProfilePage from '@/pages/ProfilePage'
+import VirtualCompanionPage from '@/pages/VirtualCompanionPage'
 
 function AppRoutes() {
   const { isAuthenticated, user } = useAuth()
@@ -62,6 +63,7 @@ function AppRoutes() {
       <Route path="/privacy" element={<ProtectedRoute><Layout><PrivacyPage /></Layout></ProtectedRoute>} />
       <Route path="/resources" element={<ProtectedRoute><Layout><ResourcesPage /></Layout></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
+      <Route path="/companion" element={<ProtectedRoute><Layout><VirtualCompanionPage /></Layout></ProtectedRoute>} />
 
       {/* Catch-all */}
       <Route path="*" element={<Navigate to={isAuthenticated ? '/dashboard' : '/'} replace />} />

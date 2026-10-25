@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Shield, Home, AlertTriangle, Users, Map, Bot, Archive,
   Lock, Settings, LogOut, Bell, Sun, Moon, Menu, X, ChevronRight,
-  Zap, Phone
+  Zap, Phone, HeartHandshake
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -13,6 +13,7 @@ import SOSButton from './SOSButton'
 const navItems = [
   { to: '/dashboard', icon: Home, label: 'Dashboard' },
   { to: '/sos', icon: AlertTriangle, label: 'Emergency SOS' },
+  { to: '/companion', icon: HeartHandshake, label: 'Virtual Companion' },
   { to: '/contacts', icon: Users, label: 'Trusted Contacts' },
   { to: '/safe-trip', icon: Map, label: 'Safe Trip' },
   { to: '/digital-shield', icon: Bot, label: 'Digital Shield' },
